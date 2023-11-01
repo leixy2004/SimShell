@@ -5,7 +5,7 @@ include(CTest)
 enable_testing()
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/include")
 
-add_executable(SimShell main.cpp)
+add_executable(SimShell main.c)
 target_link_libraries(SimShell readline)
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
