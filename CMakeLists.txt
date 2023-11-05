@@ -1,11 +1,20 @@
 cmake_minimum_required(VERSION 3.20.0)
 project(SimShell VERSION 0.1.0 LANGUAGES C CXX)
 add_definitions(-DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
+add_definitions(-D_POSIX_C_SOURCE=200809L)
 include(CTest)
 enable_testing()
+add_subdirectory(src)
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/include")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY bin)
+
 
 add_executable(SimShell main.c)
+add_executable(ls ls.c)
+add_executable(mkdir mkdir.c)
+add_executable(rmdir rmdir.c)
+add_executable(rm rm.c)
+add_executable(touch touch.c)
 target_link_libraries(SimShell readline)
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
