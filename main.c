@@ -9,18 +9,44 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <stdbool.h>
+#include <fcntl.h>
+#define __POSIX_C_SOURCE
 #include "ANSI-color-codes.h"
 #define kBuffSize (1<<12)
+
+void swap(int *a,int *b) {
+    int *t=a;
+    a=b;
+    b=t;
+}
+
+void show_argv(char **argv) {
+    // fprintf(stderr,"\n");
+    for (int i=0;argv[i]!=NULL;i++) {
+        fprintf(stderr,"[%d]:%s",i,argv[i]);
+    }
+    fprintf(stderr,"\n");
+}
 
 struct passwd *pwd ;
 char hostname[kBuffSize];
 char dir[kBuffSize];
 
-void singal_handler(int SIG) {
+void parent_singal_handler(int SIG) {
+    switch(SIG) {
+        case SIGINT: {
+            break;
+        }
+    }
+}
+
+void child_singal_handler(int SIG) {
     switch(SIG) {
         case SIGINT: {
             fprintf(stdout,"Process exit!\n");
+            exit(EXIT_SUCCESS);
             break;
         }
     }
@@ -62,10 +88,22 @@ bool in_cmd(char **argv) {
         return false;
 }
 
-void real_exec_cmd(char **argv) {
+void real_exec_cmd(char **argv,int fd_in,int fd_out) {
+    fprintf(stdout,"cmd in:%d out:%d\n",fd_in,fd_out);
+    show_argv(argv);
+    fprintf(stdout,"\n");
+
+
     pid_t pid = fork();
     if (pid==0) {
+        signal(SIGINT,child_singal_handler);
         if (in_cmd(argv)) return;
+        if (fd_in!=STDIN_FILENO) {
+            dup2(fd_in,STDIN_FILENO);
+        }
+        if (fd_out!=STDOUT_FILENO) {
+            dup2(fd_out,STDOUT_FILENO);
+        }
         execvp(argv[0],argv);
         printf("Cmd Failed\n");
     } else {
@@ -75,7 +113,7 @@ void real_exec_cmd(char **argv) {
 }
 
 
-void divide_space(char *str) {
+void divide_space(char *str,int fd_in,int fd_out) {
     char *argv[kBuffSize];
     int argc=0;
     char *token=strtok(str," ");
@@ -84,7 +122,38 @@ void divide_space(char *str) {
         token=strtok(NULL," "); // can not deal with \"
     }
     argv[argc]=NULL;
-    real_exec_cmd(argv);
+    for (int i=0;i<argc;i++) {
+        if (argv[i]==NULL) continue;
+        if (strcmp(">",argv[i])==0) {
+            if (fd_out!=STDOUT_FILENO || i+1>=argc || argv[i+1]==NULL) {
+                perror("pipe failed.\n");
+                return;
+            }
+            mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+
+            fd_out=creat(argv[i+1],mode);
+            argv[i]=argv[i+1]=NULL;
+        } else if (strcmp("<",argv[i])==0) {
+            if (fd_in!=STDIN_FILENO || i+1>=argc || argv[i+1]==NULL) {
+                perror("pipe failed.\n");
+                return;
+            }
+
+            fd_in=open(argv[i+1],O_RDONLY);
+            argv[i]=argv[i+1]=NULL;
+        }
+    }
+    for (int i=0;i<argc;i++) {
+        if (argv[i]!=NULL) continue;
+        for (int j=i+1;j<argc;j++) {
+            if (argv[j]!=NULL) {
+                argv[i]=argv[j];
+                argv[j]=NULL;
+                break;
+            }
+        }
+    }
+    real_exec_cmd(argv,fd_in,fd_out);
 }
 
 
@@ -97,9 +166,24 @@ void divide_pipe(char *str) {
         cmdv[cmdc++]=token;
         token=strtok(NULL,"|"); // can not deal with \"
     }
+    int stream[(cmdc)*2];
+    stream[0]=STDIN_FILENO;
+    stream[(cmdc)*2-1]=STDOUT_FILENO;
+    for (int i=0;i<cmdc-1;i++) {
+        int p[2];
+        if (pipe(p)==-1) {
+            perror("FAILED PIPE.\n");
+            return;
+        }
+        stream[i*2+1]=p[1];  // write
+        stream[i*2+2]=p[0];  // read
+    }
+    for (int i=0;i<(cmdc)*2;i++) {
+        printf("s[%d]:%d ",i,stream[i]);
+    }
     cmdv[cmdc]=NULL;
     for (int i=0;i<cmdc;i++) {
-        divide_space(cmdv[i]);
+        divide_space(cmdv[i],stream[i*2],stream[i*2+1]);
     }
 }
 
@@ -120,7 +204,8 @@ void divide_semicolon(char *str) {
 }
 
 int main() {
-    signal(SIGINT,singal_handler);
+    signal(SIGINT,parent_singal_handler);
+
     char prompt[kBuffSize];
     using_history();
     pwd=getpwuid(getuid());
@@ -129,6 +214,7 @@ int main() {
         gethostname(hostname,kBuffSize);
         getcwd(dir,kBuffSize);
         sprintf(prompt,"(FAKE) " BHGRN "%s@%s" CRESET ":" BHBLU "%s" CRESET "%c ",pwd->pw_name,hostname,dir,(pwd->pw_uid ? '$' : '#'));
+        fflush(stdout);
         str=readline(prompt);
         if (!str) break;
         add_history(str);
